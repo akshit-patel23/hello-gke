@@ -1,18 +1,10 @@
-
+# Lightweight Nginx image
 FROM nginx:alpine
 
-# Build-time variable for tagging
-ARG BUILD_TAG="local"
-ENV BUILD_TAG=$BUILD_TAG
+# Copy hello.html as index.html
+COPY hello.html /usr/share/nginx/html/index.html
 
-# Copy your HTML file into Nginx's default web root
-COPY --chown=nginx:nginx hello.html /usr/share/nginx/html/index.html
-
-# Replace placeholder with actual build tag for visibility
-RUN sed -i "s/\${BUILD_TAG}/${BUILD_TAG}/g" /usr/share/nginx/html/index.html
-
-# Expose port 80 for HTTP traffic
+# Expose port 80
 EXPOSE 80
 
-# Run as non-root user for security
-USER nginx
+# Nginx will run in foreground by default via base image's CMD
