@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: hello-web
-          image: REPLACED_BY_CI # Jenkins will set this
+          image: us-central1-docker.pkg.dev/playground-s-11-4c7ee845/hello-repo/hello-app:v1
           ports:
             - containerPort: 80
           resources:
