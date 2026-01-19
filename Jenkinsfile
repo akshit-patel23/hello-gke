@@ -1,3 +1,4 @@
+
 pipeline {
   agent any
 
@@ -10,11 +11,10 @@ pipeline {
     CLUSTER_NAME = "hello-gke"
     CLUSTER_ZONE = "us-central1-a"
 
-    DEPLOYMENT   = "hello-deployment"
-    CONTAINER    = "hello-container"
+    DEPLOYMENT   = "hello-web"
+    CONTAINER    = "hello-web"
 
-    // Artifact Registry full image path
-    IMAGE = "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${IMAGE_NAME}"
+    IMAGE        = "${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${IMAGE_NAME}"
   }
 
   stages {
@@ -25,15 +25,30 @@ pipeline {
       }
     }
 
-    stage("Build & Push (Cloud Build)") {
+    stage("GCloud Auth + Docker Login") {
+      steps {
+        withCredentials([file(credentialsId: 'gcp-sa', variable: 'GOOGLE_APPLICATION_CREDENTIALS')]) {
+          sh """
+            echo "🔐 Activating Service Account..."
+            gcloud auth activate-service-account --key-file=${GOOGLE_APPLICATION_CREDENTIALS}
+            gcloud config set project ${PROJECT_ID}
+
+            echo "🔐 Docker Auth with Artifact Registry..."
+            gcloud auth configure-docker ${REGION}-docker.pkg.dev -q
+          """
+        }
+      }
+    }
+
+    stage("Docker Build & Push") {
       steps {
         sh """
-          echo "Building image: ${IMAGE}:${BUILD_NUMBER}"
+          echo "🐳 Building Docker Image: ${IMAGE}:${BUILD_NUMBER}"
 
-          gcloud config set project ${PROJECT_ID}
+          docker build -t ${IMAGE}:${BUILD_NUMBER} .
 
-          # Build & push using Cloud Build (no docker needed on Jenkins VM)
-          gcloud builds submit --tag ${IMAGE}:${BUILD_NUMBER} .
+          echo "📤 Pushing Image to Artifact Registry..."
+          docker push ${IMAGE}:${BUILD_NUMBER}
         """
       }
     }
@@ -41,23 +56,23 @@ pipeline {
     stage("Get GKE Credentials") {
       steps {
         sh """
-          gcloud config set project ${PROJECT_ID}
+          echo "🔗 Fetching GKE Cluster Credentials..."
           gcloud container clusters get-credentials ${CLUSTER_NAME} --zone ${CLUSTER_ZONE}
         """
       }
     }
 
-    stage("Deploy / Update K8s") {
+    stage("Deploy to GKE") {
       steps {
         sh """
-          # Apply manifests (service, deployment, etc.)
-          kubectl apply -f k8s/deployment.yml
-          kubectl apply -f k8s/service.yml
+          echo "🚀 Applying K8s Manifests..."
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/deployment.yaml
 
-          # Update deployment image to the new build
+          echo "🔄 Updating Deployment Image..."
           kubectl set image deployment/${DEPLOYMENT} ${CONTAINER}=${IMAGE}:${BUILD_NUMBER}
 
-          # Wait for rollout
+          echo "⌛ Waiting for Rollout..."
           kubectl rollout status deployment/${DEPLOYMENT}
         """
       }
@@ -66,7 +81,8 @@ pipeline {
     stage("Apply HPA") {
       steps {
         sh """
-          kubectl apply -f k8s/hpa.yml
+          echo "📈 Applying HPA..."
+          kubectl apply -f k8s/hpa.yaml
           kubectl get hpa
         """
       }
@@ -75,10 +91,15 @@ pipeline {
 
   post {
     success {
-      echo "✅ CI/CD Success: Image deployed & HPA applied."
+      sh '''
+        echo "🎉 SUCCESS! App deployed with Docker-built image."
+        echo -n "🌐 External IP: "
+        kubectl get svc hello-web -o jsonpath="{.status.loadBalancer.ingress[0].ip}"
+        echo ""
+      '''
     }
     failure {
-      echo "❌ CI/CD Failed. Check console output logs."
+      echo "❌ Pipeline Failed. Check logs."
     }
   }
 }
